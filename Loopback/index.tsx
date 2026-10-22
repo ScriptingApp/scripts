@@ -45,6 +45,7 @@ let pageOpening = false;
 let resumeListenerInstalled = false;
 
 async function presentLoopbackPage(): Promise<void> {
+  if (Script.env === "home_screen") return;
   if (pageOpen || pageOpening) return;
   pageOpening = true;
   try {
@@ -142,7 +143,7 @@ export function App() {
       <List
         navigationTitle={tx("回环", "Loopback")}
         listStyle="insetGroup"
-        toolbar={{ cancellationAction: <Button title={tx("关闭", "Close")} action={() => dismiss()} /> }}
+        toolbar={Script.env === "home_screen" ? {} : { cancellationAction: <Button title={tx("关闭", "Close")} action={() => dismiss()} /> }}
       >
         <Section
           header={<Text>{tx("状态", "Status")}</Text>}
