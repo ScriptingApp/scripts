@@ -39,22 +39,17 @@ import { loadConnectionSettings } from "./kit/settings";
 import { CheckPage } from "./pages/CheckPage";
 import { PairingPage } from "./pages/PairingPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { isServiceInvocation, PageCoordinator } from "./kit/presentation";
 
-let pageOpen = false;
-let pageOpening = false;
-let resumeListenerInstalled = false;
+const pages = new PageCoordinator(
+  async pairingOnly => {
+    await Navigation.present({ element: <App pairingOnly={pairingOnly} />, modalPresentationStyle: "fullScreen" });
+  },
+  () => loadPairing() !== null,
+);
 
-async function presentLoopbackPage(): Promise<void> {
-  if (Script.env === "home_screen") return;
-  if (pageOpen || pageOpening) return;
-  pageOpening = true;
-  try {
-    pageOpen = true;
-    await Navigation.present({ element: <App />, modalPresentationStyle: "fullScreen" });
-  } finally {
-    pageOpen = false;
-    pageOpening = false;
-  }
+function openPage(): void {
+  void pages.open().catch(error => console.error(describeError(error)));
 }
 
 type LoopbackCommand = "status" | "ensureTunnel" | "releaseTunnel";
@@ -95,7 +90,7 @@ function Row({ title, subtitle, systemImage, color }: { title: string; subtitle:
   );
 }
 
-export function App() {
+export function App({ pairingOnly = false }: { pairingOnly?: boolean } = {}) {
   const dismiss = Navigation.useDismiss();
   const [paired, setPaired] = useState(() => loadPairing() !== null);
   const [connected, setConnected] = useState(deviceHub.connected);
@@ -133,6 +128,19 @@ export function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function pairingChanged() {
+    setPaired(loadPairing() !== null);
+    pages.notifyPairingChanged();
+  }
+
+  if (pairingOnly) {
+    return (
+      <NavigationStack>
+        <PairingPage onChanged={pairingChanged} onClose={() => dismiss()} />
+      </NavigationStack>
+    );
   }
 
   const settings = loadConnectionSettings();
@@ -193,7 +201,7 @@ export function App() {
           <NavigationLink destination={<CheckPage />}>
             <Row title={tx("兼容性自检", "Compatibility Check")} subtitle={tx("检查设备和 Scripting 能力", "Check device and Scripting capabilities")} systemImage="checklist" color="systemBlue" />
           </NavigationLink>
-          <NavigationLink destination={<PairingPage onChanged={() => setPaired(loadPairing() !== null)} />}>
+          <NavigationLink destination={<PairingPage onChanged={pairingChanged} />}>
             <Row title={tx("配对", "Pair Device")} subtitle={tx("配一次，其他脚本通过服务接入", "Pair once; other scripts use the service")} systemImage="link" color="systemGreen" />
           </NavigationLink>
           <NavigationLink destination={<SettingsPage />}>
@@ -231,13 +239,10 @@ export function App() {
 }
 
 async function run() {
-  if (!resumeListenerInstalled) {
-    resumeListenerInstalled = true;
-    Script.onResume(() => {
-      // 用户再次点击脚本时，如果页面已经关闭才重新打开；页面仍在显示时不重复 present。
-      if (!pageOpen && !pageOpening) void presentLoopbackPage();
-    });
-  }
+  Script.onResume(event => {
+    // Each resume has its own source; the initial snapshot never changes.
+    if (!isServiceInvocation(event.invocation.source)) openPage();
+  });
 
   // A 只注册一个串行服务。服务回调完成不会退出脚本，因此 deviceHub 继续持有 A 的句柄。
   ScriptSession.serve(async (message) => {
@@ -247,9 +252,11 @@ async function run() {
         await deviceHub.disconnect();
         return { status: "tunnel_closed", released: true } satisfies LoopbackResult;
       }
-      // 页面由入口统一打开；服务回调只负责检查状态和准备隧道，不重复展示页面。
-      if (!loadPairing()) return { status: "not_paired", ready: false, message: "配对未完成，请先在 Loopback 页面完成配对" } satisfies LoopbackResult;
       try {
+        if (!loadPairing() && !(await pages.waitForPairing())) {
+          return { status: "not_paired", ready: false, message: tx("配对未完成、已取消或等待超时，请重试。", "Pairing was not completed, was cancelled, or timed out. Please retry.") } satisfies LoopbackResult;
+        }
+        if (!loadPairing()) return { status: "not_paired", ready: false } satisfies LoopbackResult;
         await deviceHub.get();
         return { status: "tunnel_open", ready: true } satisfies LoopbackResult;
       } catch (error) {
@@ -257,9 +264,9 @@ async function run() {
       }
     });
 
-  // 用户从脚本列表启动、或 ScriptSession 冷启动时，都打开同一个页面。
-  // 页面关闭后脚本仍存活；再次恢复脚本时，Script.onResume 会按需重新打开页面。
-  await presentLoopbackPage();
+  // Only ensureTunnel may request pairing UI on a service cold start.
+  // Manual/Script.run launches open UI. Dismissal never exits this service.
+  if (!isServiceInvocation(Script.invocation.source)) openPage();
 }
 
 void run();

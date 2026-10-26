@@ -6,19 +6,29 @@ The script stores pairing credentials **only in its own Keychain**. It never ret
 
 ## User flow
 
-Run Loopback directly from Scripting to open its pairing UI. If a pairing already exists, the same page shows the current record and connection controls. The UI supports PIN pairing and importing/exporting pairing files.
+Run Loopback manually from Scripting or launch it via `Script.run` to open its pairing UI. If a pairing already exists, the same page shows the current record and connection controls. The UI supports PIN pairing and importing/exporting pairing files.
 
-After a pairing record exists:
+Invocation and pairing behavior:
 
-- `ensureTunnel` opens a tunnel directly when needed.
-- It does not show the UI for an already paired device.
-- The entry page is shown whenever Loopback starts, including a ScriptSession cold start.
+- A ScriptSession cold start or a service-originated resume does not automatically open the UI.
+- Only a user-originated resume reopens the page when needed; an already visible page is reused rather than duplicated.
 - Closing the page only dismisses the UI; the script remains alive and keeps serving ScriptSession commands.
-- When the script resumes, it checks whether the page is already open. If it was closed, the page is presented again; an already visible page is not duplicated.
+- For an already paired device, `ensureTunnel` opens a tunnel directly when needed without opening the UI.
+- If no pairing exists, `ensureTunnel` opens or reuses the pairing page and waits up to 120 seconds for the pairing record to be saved successfully before opening the tunnel. Successful pairing does not require closing the page.
+- Closing the page while still unpaired returns `not_paired` to the waiting `ensureTunnel` call.
 - After pairing, close the page if desired. Other scripts can call `ensureTunnel` and then attach their own RSD tunnel handle.
-- `status` and `releaseTunnel` do not present an additional page.
+- `status` and `releaseTunnel` never open the UI.
 
 The UI chooses Simplified Chinese when `Device.systemLocale` starts with `zh`; all other locales fall back to English.
+
+## VPN preparation
+
+Choose a tunnel source in Connection Settings:
+
+- **Scripting**: before creating a new device session, Loopback checks LocalDevVPN, enables it if needed, starts Scripting's VPN when disconnected, and waits up to 30 seconds for LocalDevVPN readiness. First use may require VPN permission. Starting Scripting's VPN may replace an external VPN.
+- **External VPN**: Loopback does not start, stop, or reconfigure Scripting's VPN. Configure local reflection in your external VPN tool yourself.
+
+Existing live sessions and ready RSD tunnels are reused without changing VPN settings. New pairing verification also goes through VPN preparation before connecting. Closing the UI or releasing Loopback's RSD handle never stops the VPN. The VPN state API reports Scripting's VPN, not arbitrary third-party VPNs. A preparation timeout does not undo a native operation already accepted.
 
 ## Public ScriptSession service
 
@@ -27,8 +37,10 @@ Loopback registers one serial public service with `ScriptSession.serve`. Command
 | Command | Result | UI |
 | --- | --- | --- |
 | `status` | `paired`, `tunnel_open`, or `not_paired` | Never opens UI |
-| `ensureTunnel` | Ensures Loopback's own tunnel handle is ready | Opens pairing UI only when no pairing exists |
+| `ensureTunnel` | Ensures Loopback's own tunnel handle is ready; if unpaired, waits up to 120 seconds for a successfully saved pairing record before opening the tunnel; closing the page while unpaired returns `not_paired` | If unpaired, opens or reuses the pairing page; success does not require closing it. If paired, never opens UI |
 | `releaseTunnel` | Releases Loopback's own handle | Never opens UI |
+
+The recommended total client timeout is `180000` ms to allow for pairing and tunnel preparation. The service processes commands serially, so concurrent calls also queue; a client timeout does not cancel work already accepted by Loopback.
 
 Example client:
 

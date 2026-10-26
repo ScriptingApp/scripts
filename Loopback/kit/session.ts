@@ -3,7 +3,7 @@
 // 几条用真机换来的规矩，改这个文件前先过一遍：
 //   - 配对服务的落点照 Bonjour 公告走，地址和端口一样要紧（蜂窝下尤其）
 //   - 隧道监听是一次性的，拿到端口后绝不先做 TCP 探测，探一下端口就废了
-//   - 外部 VPN / 本机反射由用户或代理工具提供，Loopback 不自动启停 VPN
+//   - builtIn 按需准备 Scripting VPN；proxyApp 不改动外部 VPN；关闭会话不停止 VPN
 //   - 配对连接要留到会话结束，设备的隧道监听挂在它上面
 //
 // 一个会话持有**整个 App 唯一的那条隧道**（文档：最多一个隧道、四个 TCP 连接）。
@@ -18,6 +18,7 @@ import { connectTCP, probeTCP } from "../core/tcp";
 import { PlistServiceClient } from "./lockdown";
 // RSD 服务目录由原生 VPNRSDTunnel.listServices 提供。
 import type { ConnectionSettings } from "./settings";
+import { prepareVPN } from "./vpn";
 
 export type StatusReporter = (message: string) => void;
 
@@ -30,7 +31,7 @@ const TARGET_CACHE_KEY = "devicekit_pairing_target_v1";
 const MAX_SERVICE_CONNECTIONS = 3;
 const TUNNEL_OPEN_TIMEOUT_MS = 15_000;
 
-// 本机反射/外部 VPN 由用户或代理工具提供；Loopback 不自动启动或停止 VPN。
+// 底层 VPN 准备集中在 kit/vpn.ts，必须在查找配对服务之前完成。
 
 // ── 找配对服务 ────────────────────────────────────────────────────────────
 
@@ -207,6 +208,7 @@ export class DeviceSession {
    * 建立会话。任一步失败都会把已经建立的连接收干净再抛错，不留半开的隧道。
    */
   static async open(record: PairingRecord, settings: ConnectionSettings, log: StatusReporter = () => {}): Promise<DeviceSession> {
+    await prepareVPN(settings, log);
     const pairing = await openPairing(settings, record, log);
 
     let port: number;

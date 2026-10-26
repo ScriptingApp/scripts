@@ -15,6 +15,7 @@ import { HOLDER_RENEW_MS, claimHolder, holderText, readHolder, releaseHolder, se
 import { withLinkHint } from "./network";
 import { DeviceSession, type StatusReporter } from "./session";
 import { loadConnectionSettings } from "./settings";
+import { VPNPreparationError } from "./vpn";
 
 type ConnectionListener = (connected: boolean) => void;
 
@@ -93,6 +94,8 @@ class DeviceHub {
       this.setSession(session);
       return session;
     } catch (error) {
+      // Preparation/permission failures must not be disguised as a stale holder warning.
+      if (error instanceof VPNPreparationError) throw error;
       /*
         失败了先看看是不是被别的脚本占着——同时只能有一条隧道，这是最说得清的那种失败。
         标记只是自愿登记，没有也可能正被占着，所以查不到就按网络那条路继续说。

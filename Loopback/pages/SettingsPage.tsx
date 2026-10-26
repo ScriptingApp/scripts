@@ -33,9 +33,7 @@ export function SettingsPage() {
         header={<Text>{tx("隧道来源", "Tunnel Source")}</Text>}
         footer={
           <Text foregroundStyle="tertiaryLabel">
-            Scripting 自身：由 Scripting 的 VPN 提供回环，首次会弹系统授权。
-            代理工具提供：回环由 Surge / Loon 这类工具提供，本脚本不会去启动 Scripting 的 VPN（那样会把代理顶掉）。
-            iOS 同时只允许一条 VPN。
+            {tx("Scripting 自身：新建连接前自动启用本机开发 VPN、按需启动 Scripting VPN 并等待就绪；首次可能需要系统授权，可能替换当前外部 VPN。代理工具提供：由 Surge / Loon 等提供反射，不改动 VPN。释放 RSD 隧道不会停止 VPN。", "Scripting: enable LocalDevVPN, start Scripting VPN as needed, and wait for readiness before a new connection. This may require permission and replace an external VPN. External VPN: supply reflection through Surge, Loon, or another tool; VPN settings are left untouched. Releasing an RSD tunnel does not stop the VPN.")}
           </Text>
         }
       >
@@ -45,8 +43,8 @@ export function SettingsPage() {
           value={settings.source}
           onChanged={(value: string) => update({ source: value === "proxyApp" ? "proxyApp" : "builtIn" })}
         >
-          <Text tag="builtIn">Scripting 自身</Text>
-          <Text tag="proxyApp">代理工具提供</Text>
+          <Text tag="builtIn">{tx("Scripting 自身", "Scripting")}</Text>
+          <Text tag="proxyApp">{tx("代理工具提供", "External VPN")}</Text>
         </Picker>
       </Section>
 

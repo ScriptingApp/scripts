@@ -22,7 +22,7 @@ import { deviceHub } from "../kit/hub";
 import { releaseKeepAlive, retainKeepAlive } from "../utils/keepalive";
 import { PIN_ORDER_HINT, clearPinNotice, showPinNotice } from "../kit/pinNotice";
 
-export function PairingPage({ onChanged, onPaired }: { onChanged: () => void; onPaired?: (record: PairingRecord) => void }) {
+export function PairingPage({ onChanged, onPaired, onClose }: { onChanged: () => void; onPaired?: (record: PairingRecord) => void; onClose?: () => void }) {
   const [record, setRecord] = useState<PairingRecord | null>(() => loadPairing());
   const [status, setStatus] = useState("");
   const [isError, setIsError] = useState(false);
@@ -151,7 +151,8 @@ export function PairingPage({ onChanged, onPaired }: { onChanged: () => void; on
   }
 
   return (
-    <List navigationTitle={tx("配对", "Pair Device")} navigationBarTitleDisplayMode="inline" listStyle="insetGroup">
+    <List navigationTitle={tx("配对", "Pair Device")} navigationBarTitleDisplayMode="inline" listStyle="insetGroup"
+      toolbar={onClose ? { cancellationAction: <Button title={tx("关闭", "Close")} action={onClose} /> } : undefined}>
       <Section header={<Text>{tx("当前记录", "Current Record")}</Text>}>
         {record ? (
           <VStack alignment="leading" spacing={4}>
