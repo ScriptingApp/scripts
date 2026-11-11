@@ -26,6 +26,20 @@ export default function ApplicationView() {
   const canSubmit = receiptRecognized && isValidEmail(email) && isValidOrderId(orderId)
     && Boolean(receiptImage && proImage && reviewImage)
 
+  const confirmRecognizedFields = async (recognizedEmail: string | null, recognizedOrder: string): Promise<void> => {
+    const verified = await Dialog.confirm({
+      title: copy.ocrVerifyTitle,
+      message: [
+        copy.ocrVerifyMessage, "",
+        `${copy.email}：${recognizedEmail ?? copy.emailNotRecognized}`,
+        `${copy.order}：${recognizedOrder}`,
+      ].join("\n"),
+      confirmLabel: copy.ocrVerifyConfirm,
+      cancelLabel: copy.ocrVerifyCancel,
+    })
+    if (!verified) setMessage(copy.ocrVerifyHint)
+  }
+
   const pickImage = async (kind: "receipt" | "pro" | "review"): Promise<void> => {
     try {
       const picked = await Photos.pickPhotos(1)
@@ -38,6 +52,7 @@ export default function ApplicationView() {
         setOrderId("")
         setRecognizing(true)
         setMessage(copy.recognizing)
+        let recognized: { email: string | null, orderId: string } | null = null
         try {
           const result = await Vision.recognizeText(image, {
             recognitionLevel: "accurate",
@@ -57,6 +72,7 @@ export default function ApplicationView() {
           if (fields.email) setEmail(fields.email)
           setOrderId(fields.orderId)
           setMessage(copy.ocrSuccess)
+          recognized = { email: fields.email, orderId: fields.orderId }
         } catch {
           setReceiptImage(null)
           setReceiptRecognized(false)
@@ -65,6 +81,7 @@ export default function ApplicationView() {
         } finally {
           setRecognizing(false)
         }
+        if (recognized) await confirmRecognizedFields(recognized.email, recognized.orderId)
       } else if (kind === "pro") {
         setProImage(image)
       } else {

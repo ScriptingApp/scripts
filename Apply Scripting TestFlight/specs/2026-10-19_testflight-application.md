@@ -49,9 +49,10 @@
 - 2026-10-19: 申请信息增加确认 footer；上传 row 增加完成图标，选中图片在 Section 内独立下一行等比展示。
 - 2026-10-19: 将入口、页面、文案、OCR 工具和截图组件拆分为多个模块，保持功能不变。
 - 2026-10-19: 修复邮件正文使用字面量 `\\n` 的问题，改用真正的换行符。
+- 2026-11-11: OCR 识别成功填充邮箱/订单号后弹出 `Dialog.confirm` 核对弹窗，列出识别到的邮箱与订单号并提示“信息有误将无法收到 TestFlight 邀请”；取消时在页面留下核对提示；申请信息 footer 同步强调与收据一致。
 
 ## Validation
-- Self-check: 已覆盖邮箱格式、10 位订单号、三张截图和 Mail 可用性校验；申请信息仅在收据 OCR 识别出订单号后显示并提示确认；无订单号或 OCR 异常时清除收据并通过 Dialog.alert 提示截图不合法；上传 row 用蓝色添加/绿色完成图标区分状态，图片在下一行 fit 等比显示；按钮在所有资料满足前禁用；`Device.systemLocale` 控制中文，其他语言回退英文；模块职责已拆分。
+- Self-check: 已覆盖邮箱格式、10 位订单号、三张截图和 Mail 可用性校验；申请信息仅在收据 OCR 识别出订单号后显示并提示确认；OCR 成功后必弹核对弹窗（邮箱未识别时显示“未识别到，请手动填写”）；无订单号或 OCR 异常时清除收据并通过 Dialog.alert 提示截图不合法；上传 row 用蓝色添加/绿色完成图标区分状态，图片在下一行 fit 等比显示；按钮在所有资料满足前禁用；`Device.systemLocale` 控制中文，其他语言回退英文；模块职责已拆分。
 - Static checks: 入口、页面、文案、OCR 和截图组件五个模块的 `get_typescript_diagnostics` 均无诊断。
 - Runtime / Test: `scripting-ts preview_ui pages/application_view.tsx` 成功渲染。
 - Human confirmation: 待用户在真实设备上切换语言、选择图片并确认邮件内容。

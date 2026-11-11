@@ -37,6 +37,6 @@
   "remoteDefinitionId" : null,
   "remoteResource" : null,
   "color" : "rgba(28, 140, 255,1)",
-  "version" : "1.0.0",
+  "version" : "1.0.1",
   "icon" : "airplane.departure"
 }
