@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "libraries": {
+    "iphoneos": "BorderBeam.iphoneos.metallib",
+    "iphonesimulator": "BorderBeam.iphonesimulator.metallib"
+  },
+  "functions": [
+    {
+      "name": "borderBeam",
+      "effect": "colorEffect",
+      "arguments": [
+        "boundingRect",
+        "float",
+        "float",
+        "float",
+        "float",
+        "float",
+        "float",
+        "float",
+        "float",
+        "float4",
+        "float4",
+        "float4",
+        "float4",
+        "float4",
+        "float"
+      ]
+    }
+  ]
+}

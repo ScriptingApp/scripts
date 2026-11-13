@@ -1,0 +1,17 @@
+{
+  "name": "Border Beam",
+  "icon": "sparkles.rectangle.stack",
+  "color": "rgba(90, 140, 255, 1)",
+  "version": "1.0.0",
+  "runInApp": true,
+  "description": "An animated comet of light that travels around the border of any view, drawn with the Canvas 2D API.",
+  "author": {
+    "name": "Scripting Agent"
+  },
+  "localizedNames": {
+    "zh": "边框流光"
+  },
+  "localizedDescriptions": {
+    "zh": "沿着任意视图边框运行的光束，使用 Canvas 绘制。"
+  }
+}

@@ -9,6 +9,7 @@ A curated collection of scripts for the **[Scripting app](https://scripting.fun/
 | [Loopback](./Loopback) | Pair an iOS device and prepare a native RSD tunnel for other Scripting scripts. Pairing credentials stay only in Loopback's Keychain; client scripts use `ScriptSession` to request status or open the tunnel, then call `VPN.localDevVPN.attachRSDTunnel()` to obtain their own handle. The UI supports Chinese and English, with English as the fallback. | [Import](https://scripting.fun/import_scripts?urls=%5B%22https%3A%2F%2Fgithub.com%2FScriptingApp%2Fscripts%2Ftree%2Fmain%2FLoopback%22%5D) |
 | [Video to Live Photo](./Video%20to%20Live%20Photo) | Choose a video from Photos, adjust the cover moment and duration, then create and save a Live Photo directly to your library. The interface automatically follows the device language (English or Chinese). | [Import](https://scripting.fun/import_scripts?urls=%5B%22https%3A%2F%2Fgithub.com%2FScriptingApp%2Fscripts%2Ftree%2Fmain%2FVideo%20to%20Live%20Photo%22%5D) |
 | [Apply Scripting TestFlight](./Apply%20Scripting%20TestFlight) | Apply for Scripting TestFlight access with a purchase receipt, Scripting Pro status screenshot, and App Store five-star review screenshot. Receipt OCR extracts the Apple ID email and order number, asks you to confirm both match the receipt (wrong details mean no invitation), then opens a prefilled Mail draft with all three screenshots attached. The interface supports Chinese and English, with English as the fallback. | [Import](https://scripting.fun/import_scripts?urls=%5B%22https%3A%2F%2Fgithub.com%2FScriptingApp%2Fscripts%2Ftree%2Fmain%2FApply%20Scripting%20TestFlight%22%5D) |
+| [Border Beam](./Border%20Beam) | An animated comet of light that orbits the border of any view — prompt cards, search bars, buttons or plain content. One Metal `colorEffect` pass, three styles, eight palettes, direction / intensity / speed and an `active` fade. Ships a precompiled `.metallib`, so it runs as-is. | [Import](https://scripting.fun/import_scripts?urls=%5B%22https%3A%2F%2Fgithub.com%2FScriptingApp%2Fscripts%2Ftree%2Fmain%2FBorder%20Beam%22%5D) |
 
 ## Loopback quick start
 
@@ -35,6 +36,27 @@ try {
 ```
 
 See [Loopback/README.md](./Loopback/README.md) for the full protocol, bilingual documentation, service ownership rules, and a `DeviceServices` example.
+
+## Border Beam quick start
+
+`BorderBeam` wraps any content and draws the beam over its border:
+
+```tsx
+import { BorderBeam } from "./BorderBeam"
+import { BeamPalette } from "./beam"
+
+<BorderBeam colors={BeamPalette.spectrum} shape={{ kind: "rounded", radius: 26 }}>
+  <Text padding={18}>Ask anything</Text>
+</BorderBeam>
+```
+
+Styles are `large` (comet), `small` (tight ring) and `line` (sweep along the bottom edge);
+shapes are `{ kind: "rounded", radius }`, `{ kind: "capsule" }` and `{ kind: "circle" }`.
+The beam is one GPU pass: `shaders/BorderBeam.iphoneos.metallib` runs through SwiftUI's
+`colorEffect`, so it needs iOS 18+ and `ShaderLibrary.getCapabilities().projectLibraries === true`.
+After editing `shaders/BorderBeam.metal`, rebuild the library with
+[metal-shader-build](https://github.com/thomfang/metal-shader-build); see
+[Border Beam/README.md](./Border%20Beam/README.md) for the full prop list.
 
 ## Importing Scripts
 
