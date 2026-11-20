@@ -210,6 +210,90 @@ For a full file, use `/v1/xcstrings?locales=...` with the file as the request bo
 - One translation job runs at a time; queue limit is 8 (HTTP `429` when full)
 - Async job results live in memory: latest 20 jobs, 30-minute TTL
 
+## Project batch sync (`mode=batch`)
+
+A headless mode that translates a whole directory of `*.xcstrings` files. It is
+meant to be driven from the Scripting agent (or any terminal that can run
+`scripting-ts`), so the Mac ↔ iPhone round trip stays scriptable.
+
+```bash
+scripting-ts project "Xcode Localizable Translation" \
+  --queryparameters '{
+    "mode": "batch",
+    "dir": "/path/to/tmp-xcstrings",
+    "targets": "zh-Hans,zh-Hant,ja",
+    "prune": "off",
+    "maxRequests": 40
+  }' --timeout 900
+```
+
+The script prints a JSON report and also writes `.batch-report.json` next to
+the working directory.
+
+### Behaviour
+
+- **One file at a time** — a file is scanned, translated and patched before the
+  next one starts. Dedupe is per file, so requests stay small and sequential
+  (default concurrency `1`, interval `1000ms`) and rate limits are less likely.
+- **Partial success is written** — every successful batch is patched into the
+  file immediately; a failed batch is retried in halved batches (`retries`,
+  default `2`) before the failures are reported. Failures never block the
+  successful entries from landing on disk.
+- **`stale` entries are skipped** — Xcode already marked them as gone from the
+  sources, so they are neither translated nor counted as pending. Use
+  `prune=all` / `prune=file` to delete them instead.
+- **Chunked** — `maxRequests` caps model requests per run. The run stops after
+  the current file; the next run re-scans the directory and continues, so an
+  interrupted run is always resumable.
+- **Minimal diff** — new localizations are spliced into the raw JSON text with
+  the file's own style (`"key" : value` vs `"key": value`), indent and key
+  order preserved. The patched text is parsed and deep-compared with the
+  expected object before it is written; a mismatch aborts the write.
+- **Backups** — original files are copied to `<dir>/.backup/<timestamp>/`.
+
+### Parameters
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `dir` | — | Directory to scan recursively |
+| `targets` | settings locales | Comma list or array of locales |
+| `prune` | `off` | `off` / `all` (delete every `stale` key) / `file` |
+| `pruneFile` | — | For `prune=file`: `{ "<relPath>": ["key", ...] }` |
+| `write` | `true` | `false` = report only |
+| `backup` | `true` | Copy originals before writing |
+| `maxRequests` | `40` | Model requests per run |
+| `retries` | `2` | Extra rounds for failed texts |
+| `batchSize` | settings | Texts per request (default 30) |
+| `concurrency` | `1` | Parallel requests inside one file |
+| `intervalMs` | `1000` | Minimum gap between request starts |
+| `filter` | — | Only files whose relative path contains this substring |
+| `reportPath` | `<dir>/.batch-report.json` | Report file |
+| `failedFile` | `<dir>/.batch-failed.json` | Full list of failed `{locale, key}` |
+
+### Mac round trip
+
+1. `ssh` to the Mac and pack the files:
+
+```bash
+cd ~/work/scripting-ios && \
+  find . -name '*.xcstrings' -not -path './build/*' -print > /tmp/xcs-list.txt && \
+  tar -czf /tmp/xcs-src.tgz -T /tmp/xcs-list.txt
+```
+
+2. Download the archive, extract it into a scratch directory, run `mode=batch`
+   until the report says `remaining: 0`.
+3. Pack only the changed files and unpack them back on the Mac, then review
+   `git diff --stat`.
+
+Notes:
+
+- Provider/model always come from the app settings; the request cannot override
+  them.
+- Entries with plural/device `variations` are skipped and counted in the report,
+  because the batch pipeline only handles `stringUnit` today.
+- Deleting `stale` keys is only as safe as the caller's list: the agent checks
+  the Swift sources first and passes the verified subset via `prune=file`.
+
 ## Requirements
 
 - Scripting PRO feature

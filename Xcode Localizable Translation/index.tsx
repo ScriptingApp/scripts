@@ -2,12 +2,19 @@ import { Navigation, Script } from "scripting"
 import { TranslationApp } from "./components/TranslationApp"
 import { translationHttpServer } from "./server/http_server"
 import { isServerMode, runStandaloneMode } from "./server/standalone"
+import { isBatchMode, runBatchMode } from "./engine/batch_cli"
 import * as keepAlive from "./engine/keep_alive"
 
 async function run() {
   const params = (Script.queryParameters ?? {}) as Record<string, any>
   if (isServerMode(params)) {
     await runStandaloneMode(params)
+    return
+  }
+
+  if (isBatchMode(params)) {
+    // Headless project-level pipeline; exits with a JSON report.
+    await runBatchMode(params)
     return
   }
 

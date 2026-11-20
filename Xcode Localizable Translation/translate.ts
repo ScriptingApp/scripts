@@ -95,6 +95,12 @@ function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+/** Keep logs readable: provider errors can embed the whole model output. */
+function summarizeError(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error)
+  return text.length > 300 ? `${text.slice(0, 300)}… (${text.length} chars)` : text
+}
+
 export class TranslationError extends Error {
   constructor(message: string) {
     super(message)
@@ -145,7 +151,7 @@ export async function translate(
     if (signal?.isCancelled) {
       return null
     }
-    console.error(`[${language}] ${e}`)
+    console.error(`[${language}] ${summarizeError(e)}`)
 
     if (retry < MAX_RETRIES) {
       const next = retry + 1
