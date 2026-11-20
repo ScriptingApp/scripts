@@ -11,6 +11,7 @@
 
 import { SHARED_KEYS, readShared, writeShared, removeShared } from "../core/shared";
 import { tx } from "../core/i18n";
+import { vpnSupportOf } from "./apiSupport";
 
 export type CheckState = "ok" | "warn" | "fail" | "unknown";
 
@@ -70,18 +71,25 @@ export function checkSystem(systemVersion: string, systemName = "iOS"): Check {
 /**
  * 这个版本的 Scripting 有没有开隧道的那套接口。
  *
- * 探测而不是比版本：`openRSDTunnel` 是后来才加的，旧版本上整个 `localDevVPN`
- * 都不存在，问一句就知道，不用去记哪个版本开始有。
+ * 探测而不是比版本：`openRSDTunnel`、`attachRSDTunnel`、`listServices` 都是后加的，
+ * 旧版本/商店版缺的就只是其中几个。逐个报出来，用户才知道差在哪里。
  */
 export function checkTunnelApi(api: unknown, appVersion: string): Check {
-  const local = (api as { localDevVPN?: Record<string, unknown> } | undefined)?.localDevVPN;
+  const support = vpnSupportOf(api);
   const version = appVersion ? `Scripting ${appVersion}` : "Scripting";
-  if (!local) {
-    return { label: "隧道接口", state: "fail", detail: `${version} 没有 localDevVPN。去 App Store 更新 Scripting 再回来。` };
+  if (!support.supported) {
+    return {
+      label: "隧道接口",
+      state: "fail",
+      detail: `${version} 不支持开发者通道：缺 ${support.missing.join("、")}。商店版没有这套 VPN / RSD 接口，需要带该接口的版本。`,
+    };
   }
-  const missing = ["openRSDTunnel", "getState", "setEnabled"].filter((name) => typeof local[name] !== "function");
-  if (missing.length > 0) {
-    return { label: "隧道接口", state: "fail", detail: `${version} 缺 ${missing.join("、")}。更新 Scripting 再回来。` };
+  if (support.optional.length > 0) {
+    return {
+      label: "隧道接口",
+      state: "warn",
+      detail: `${version} 可用，但缺 ${support.optional.join("、")}；取消打开会被跳过。`,
+    };
   }
   return { label: "隧道接口", state: "ok", detail: `${version}，localDevVPN 齐全` };
 }
@@ -127,10 +135,18 @@ export function checkSharedDomain(): Check {
  * 「按脚本授权」没开的时候，`requestAccess` 会把要的都给回来；开了的话会弹窗问用户。
  * 两种情况都当成「给了就行」。
  */
-export function checkAccess(granted: string[]): Check {
-  const need = ["localDevVPN", "vpn"];
+export function checkAccess(granted: string[], supported = true): Check {
+  const need = ["localDevVPN", "vpn", "fileSystem"];
   const missing = need.filter((api) => !granted.includes(api));
-  if (missing.length === 0) return { label: "权限", state: "ok", detail: "localDevVPN、vpn 都已授权" };
+  if (missing.length === 0) return { label: "权限", state: "ok", detail: "localDevVPN、vpn、fileSystem 都已授权" };
+  // 版本本身就没有这些权限项时，别催用户去授权一个不存在的东西。
+  if (!supported && missing.every((api) => api !== "fileSystem")) {
+    return {
+      label: "权限",
+      state: "warn",
+      detail: `${missing.join("、")} 在本版本不存在，不需要也无法授权。`,
+    };
+  }
   return {
     label: "权限",
     state: "fail",

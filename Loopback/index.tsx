@@ -37,9 +37,17 @@ import { deviceHub } from "./kit/hub";
 import { LINK_LABEL, linkHint, needsAttention, watchLink, type LinkKind } from "./kit/network";
 import { loadConnectionSettings } from "./kit/settings";
 import { CheckPage } from "./pages/CheckPage";
+import { DeveloperImagePage } from "./pages/DeveloperImagePage";
 import { PairingPage } from "./pages/PairingPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { DdiError } from "./kit/ddi";
+import { developerImage } from "./kit/developerImage";
+import { currentVpnApi, unsupportedMessage, vpnSupportOf, type VpnSupport } from "./kit/apiSupport";
+import { needsVpn, unsupportedReply } from "./kit/serviceResult";
 import { isServiceInvocation, PageCoordinator } from "./kit/presentation";
+
+/** 当前运行时的能力快照。只读一次：全局对象在一个脚本运行里不会变。 */
+const VPN_SUPPORT = vpnSupportOf(currentVpnApi());
 
 const pages = new PageCoordinator(
   async pairingOnly => {
@@ -52,17 +60,34 @@ function openPage(): void {
   void pages.open().catch(error => console.error(describeError(error)));
 }
 
-type LoopbackCommand = "status" | "ensureTunnel" | "releaseTunnel";
+type LoopbackCommand =
+  | "status"
+  | "ensureTunnel"
+  | "releaseTunnel"
+  | "developerImageStatus"
+  | "downloadDeveloperImage"
+  | "ensureDeveloperImage";
 
 type LoopbackResult = {
-  status: "paired" | "tunnel_open" | "not_paired" | "tunnel_closed" | "error";
+  status: "paired" | "tunnel_open" | "not_paired" | "tunnel_closed" | "unsupported" | "error";
   ready?: boolean;
   released?: boolean;
+  /** 本版本是否有 VPN / RSD 接口；缺省视为 true。 */
+  supported?: boolean;
+  /** 不支持时的缺口清单。 */
+  missing?: string[];
   message?: string;
 };
 
 function isCommand(value: unknown): value is LoopbackCommand {
-  return value === "status" || value === "ensureTunnel" || value === "releaseTunnel";
+  return (
+    value === "status" ||
+    value === "ensureTunnel" ||
+    value === "releaseTunnel" ||
+    value === "developerImageStatus" ||
+    value === "downloadDeveloperImage" ||
+    value === "ensureDeveloperImage"
+  );
 }
 
 function commandOf(message: unknown): LoopbackCommand {
@@ -74,6 +99,22 @@ function commandOf(message: unknown): LoopbackCommand {
 
 function statusResult(): LoopbackResult {
   return { status: deviceHub.connected ? "tunnel_open" : loadPairing() ? "paired" : "not_paired", ready: deviceHub.connected };
+}
+
+/**
+ * 缺接口时的统一应答：明说"当前版本不支持"，并带上缺口清单。
+ *
+ * 这是"一等结果"，不是错误：调用方拿到 `status: "unsupported"` 直接展示 message 就行，
+ * 不用自己猜是网络问题还是授权问题。整个分支不连设备，因此冷启动也不会有超时风险。
+ */
+async function unsupportedResult(command: LoopbackCommand, support: VpnSupport): Promise<any> {
+  const reply = unsupportedReply(command, support.missing);
+  if (command === "ensureDeveloperImage") {
+    // 不连设备；缓存状态照常给出来，refresh 只读本地文件。
+    await developerImage.refresh();
+    return { ...reply, cache: developerImage.state };
+  }
+  return reply;
 }
 
 function Row({ title, subtitle, systemImage, color }: { title: string; subtitle: string; systemImage: string; color: Color }) {
@@ -151,8 +192,22 @@ export function App({ pairingOnly = false }: { pairingOnly?: boolean } = {}) {
       <List
         navigationTitle={tx("回环", "Loopback")}
         listStyle="insetGroup"
-        toolbar={Script.env === "home_screen" ? {} : { cancellationAction: <Button title={tx("关闭", "Close")} action={() => dismiss()} /> }}
+        toolbar={{ cancellationAction: <Button title={tx("关闭", "Close")} action={() => dismiss()} /> }}
       >
+        {VPN_SUPPORT.supported ? null : (
+          <Section>
+            <HStack spacing={10} alignment="top">
+              <Image systemName="exclamationmark.octagon.fill" foregroundStyle="systemRed" font="title3" frame={{ width: 26 }} />
+              <VStack alignment="leading" spacing={4}>
+                <Text fontWeight="semibold">{tx("当前版本不支持开发者通道", "This build does not support the developer channel")}</Text>
+                <Text font="caption" foregroundStyle="secondaryLabel">
+                  {unsupportedMessage(VPN_SUPPORT.missing)}
+                </Text>
+              </VStack>
+            </HStack>
+          </Section>
+        )}
+
         <Section
           header={<Text>{tx("状态", "Status")}</Text>}
           footer={
@@ -192,6 +247,7 @@ export function App({ pairingOnly = false }: { pairingOnly?: boolean } = {}) {
             <Button
               title={connected ? tx("断开", "Disconnect") : tx("验证一次（实际连接测试）", "Verify connection")}
               systemImage={connected ? "xmark.circle" : "bolt.horizontal.circle"}
+              disabled={!VPN_SUPPORT.supported}
               action={() => void (connected ? deviceHub.disconnect() : verify())}
             />
           ) : null}
@@ -201,11 +257,14 @@ export function App({ pairingOnly = false }: { pairingOnly?: boolean } = {}) {
           <NavigationLink destination={<CheckPage />}>
             <Row title={tx("兼容性自检", "Compatibility Check")} subtitle={tx("检查设备和 Scripting 能力", "Check device and Scripting capabilities")} systemImage="checklist" color="systemBlue" />
           </NavigationLink>
-          <NavigationLink destination={<PairingPage onChanged={pairingChanged} />}>
+          <NavigationLink destination={<PairingPage onChanged={pairingChanged} />} disabled={!VPN_SUPPORT.supported}>
             <Row title={tx("配对", "Pair Device")} subtitle={tx("配一次，其他脚本通过服务接入", "Pair once; other scripts use the service")} systemImage="link" color="systemGreen" />
           </NavigationLink>
           <NavigationLink destination={<SettingsPage />}>
             <Row title={tx("连接设置", "Connection Settings")} subtitle={tx("隧道来源、地址和日志", "Tunnel source, address and logs")} systemImage="slider.horizontal.3" color="systemIndigo" />
+          </NavigationLink>
+          <NavigationLink destination={<DeveloperImagePage />}>
+            <Row title={tx("开发者镜像", "Developer Image")} subtitle={tx("缓存、下载与镜像源", "Cache, download and image source")} systemImage="arrow.down.circle" color="systemTeal" />
           </NavigationLink>
         </Section>
 
@@ -245,9 +304,51 @@ async function run() {
   });
 
   // A 只注册一个串行服务。服务回调完成不会退出脚本，因此 deviceHub 继续持有 A 的句柄。
-  ScriptSession.serve(async (message) => {
+  ScriptSession.serve(async (message): Promise<any> => {
       const command = commandOf(message);
+      // 先判版本能力：商店版没有 VPN / RSD 接口，所有依赖它们的命令都直接回 unsupported。
+      if (needsVpn(command) && !VPN_SUPPORT.supported) return unsupportedResult(command, VPN_SUPPORT);
       if (command === "status") return statusResult();
+      if (command === "developerImageStatus") {
+        await developerImage.refresh();
+        return { status: "ok", cache: developerImage.state };
+      }
+      if (command === "downloadDeveloperImage") {
+        await developerImage.refresh();
+        const state = developerImage.state;
+        if (state.ready) return { status: "already_ready", cache: state };
+        if (state.busy) return { status: "busy", cache: state };
+        // 启动后台下载后立即返回；进度由 developerImageStatus 查询。
+        void developerImage.download();
+        return { status: "started", cache: developerImage.state };
+      }
+      if (command === "ensureDeveloperImage") {
+        await developerImage.refresh();
+        if (!loadPairing()) return { status: "not_paired", ready: false, cache: developerImage.state };
+        if (developerImage.state.install.busy) return { status: "busy", ready: false, cache: developerImage.state };
+        try {
+          const session = await deviceHub.get();
+          const result = await developerImage.ensure(session);
+          return { status: result.kind, ready: true, version: result.version, cache: developerImage.state };
+        } catch (error) {
+          if (error instanceof DdiError) {
+            const unsupported = error.stage === "check" && /26\.4|另一套/.test(error.message);
+            return {
+              status: unsupported ? "unsupported" : "error",
+              ready: false,
+              stage: error.stage,
+              message: error.message,
+              cache: developerImage.state,
+            };
+          }
+          return {
+            status: "error",
+            ready: false,
+            message: error instanceof Error ? error.message : describeError(error),
+            cache: developerImage.state,
+          };
+        }
+      }
       if (command === "releaseTunnel") {
         await deviceHub.disconnect();
         return { status: "tunnel_closed", released: true } satisfies LoopbackResult;

@@ -4,11 +4,14 @@ import { Button, HStack, ProgressView, Section, Spacer, Text, VStack, useEffect,
 import { describeError } from "../core/debug";
 import { tx } from "../core/i18n";
 import { deviceHub } from "../kit/hub";
+import { VpnUnsupportedError } from "../kit/apiSupport";
 import type { DeviceSession, StatusReporter } from "../kit/session";
 
 export interface DeviceTask<T> {
   data: T | null;
   error: string;
+  /** 错误是「这个版本没有接口」，重试也不会好。 */
+  unsupported: boolean;
   status: string;
   loading: boolean;
   reload: () => Promise<void>;
@@ -23,6 +26,7 @@ export interface DeviceTask<T> {
 export function useDeviceTask<T>(task: (session: DeviceSession, log: StatusReporter) => Promise<T>): DeviceTask<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState("");
+  const [unsupported, setUnsupported] = useState(false);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
   const taskRef = useRef(task);
@@ -34,11 +38,14 @@ export function useDeviceTask<T>(task: (session: DeviceSession, log: StatusRepor
     runningRef.current = true;
     setLoading(true);
     setError("");
+    setUnsupported(false);
     try {
       const session = await deviceHub.get(setStatus);
       setStatus("读取中…");
       setData(await taskRef.current(session, setStatus));
     } catch (failure) {
+      // 缺接口是版本问题，重试不会变好；上层据此不给「重试」。
+      if (failure instanceof VpnUnsupportedError) setUnsupported(true);
       setError(failure instanceof Error ? failure.message : describeError(failure));
     } finally {
       runningRef.current = false;
@@ -51,7 +58,7 @@ export function useDeviceTask<T>(task: (session: DeviceSession, log: StatusRepor
     void reload();
   }, []);
 
-  return { data, error, status, loading, reload };
+  return { data, error, unsupported, status, loading, reload };
 }
 
 /** 加载中 / 出错时顶在列表最上面的那一节。都不是就不画。 */
@@ -67,6 +74,16 @@ export function TaskStateSection({ task }: { task: DeviceTask<unknown> }) {
     );
   }
   if (task.error) {
+    // 版本没有接口时重试没有意义，也不该把原因说成锁屏/网络。
+    if (task.unsupported) {
+      return (
+        <Section>
+          <VStack alignment="leading" spacing={8}>
+            <Text foregroundStyle="systemRed">{task.error}</Text>
+          </VStack>
+        </Section>
+      );
+    }
     return (
       <Section
         footer={<Text foregroundStyle="secondaryLabel">{tx("锁屏、切网络都会让隧道断开，重试会自动重连。", "Locking the screen or changing networks may drop the tunnel; retry to reconnect.")}</Text>}

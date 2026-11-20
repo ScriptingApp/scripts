@@ -39,8 +39,30 @@ UI 根据 `Device.systemLocale` 选择语言：以 `zh` 开头时使用简体中
 | `status` | `paired`、`tunnel_open` 或 `not_paired` | 从不打开 |
 | `ensureTunnel` | 确保回环自己的隧道句柄可用；未配对时最多等待 120 秒，待配对记录成功保存后再开隧道；仍未配对就关闭页面时返回 `not_paired` | 未配对时打开或复用配对页，成功无需关页；已配对时不打开 UI |
 | `releaseTunnel` | 释放回环自己的句柄 | 从不打开 |
+| `developerImageStatus` | 返回开发者镜像缓存状态；不连设备 | 从不打开 |
+| `downloadDeveloperImage` | 启动或复用后台下载并立即返回；进度用 `developerImageStatus` 查询 | 从不打开 |
+| `ensureDeveloperImage` | 需要镜像时自动下载并安装；未配对返回 `not_paired` | 从不打开 |
 
 客户端建议总超时为 `180000` 毫秒，为配对及隧道准备留出时间。服务串行处理命令，并发调用还会排队；客户端超时不会取消回环已经接受的工作。
+
+### 版本兼容（商店版）
+
+`VPN`、`VPN.localDevVPN`、`VPNRSDTunnel` 属于 VPN 功能接口，部分发行版（商店版、旧版）没有。回环在动手前先探测，缺接口时**不连设备、不弹配对页**，直接把这些命令回成“当前版本不支持”：
+
+```json
+{
+  "status": "unsupported",
+  "supported": false,
+  "ready": false,
+  "missing": ["VPN.localDevVPN.openRSDTunnel"],
+  "message": "当前 Scripting 版本不支持开发者通道相关 API（缺 VPN.localDevVPN.openRSDTunnel）……"
+}
+```
+
+- 受影响命令：`status`、`ensureTunnel`、`releaseTunnel`、`ensureDeveloperImage`；最后一条额外带 `stage: "api"` 和当时的 `cache`。
+- `developerImageStatus` / `downloadDeveloperImage` 不受影响：它们只走 HTTPS 与文件系统，商店版仍能下载、删除和查看进度。
+- 只缺 `cancelRSDTunnelOpening` 不算不支持：连接照常建立，只是跳过“取消正在打开的那次请求”。
+- 客户端可先用 `client/loopback.ts` 里的 `loopbackSupport()` 问一句；`attachLoopbackTunnel()` 在该版本返回 `null`，不抛 `ReferenceError`。
 
 其他脚本示例：
 
@@ -48,14 +70,22 @@ UI 根据 `Device.systemLocale` 选择语言：以 `zh` 开头时使用简体中
 // 脚本 B：ScriptSession、VPN、DeviceServices 都是全局 API，不需要导入。
 async function main() {
   const state = await ScriptSession.call<{
-    status: "paired" | "tunnel_open" | "not_paired" | "error";
+    status: "paired" | "tunnel_open" | "not_paired" | "unsupported" | "error";
     ready?: boolean;
+    supported?: boolean;
+    missing?: string[];
     message?: string;
   }>({
     name: "Loopback",
     message: { command: "ensureTunnel" },
     timeout: 180000,
   });
+
+  // 当前版本没有 VPN / RSD 接口：直接展示回环给的说明，不要继续 attach。
+  if (state.status === "unsupported") {
+    console.log(state.message, state.missing);
+    return;
+  }
 
   if (state.status !== "tunnel_open" || state.ready !== true) {
     throw new Error(state.message ?? `回环未就绪：${state.status}`);
@@ -115,6 +145,35 @@ const tunnel = await attachLoopbackTunnel();
 if (!tunnel) throw new Error("回环隧道不可用");
 ```
 
+## 开发者镜像（缓存、下载与安装）
+
+回环管理开发者镜像的五个文件（BuildManifest、Image.dmg、trustcache、cryptex_info、root_hash），并在需要时安装。入口在首页「开发者镜像」：
+
+- 文件缓存到 app Documents 下的 `Loopback/DDI`，与 SideInstaller 等脚本的 `Documents/DDI` 隔离；下载由 DownloadManager 后台队列完成。
+- 页面显示 `n/5`、总大小和下载进度；可以删除缓存文件，删除不会卸载设备上已安装的镜像。
+- 默认来源与 SideInstaller 相同；页面可以覆盖为任意 `https://` 镜像源，改源只清理旧下载记录，不删除已下载文件。
+- 下载默认不走蜂窝网络。
+- **安装需要 iOS 26.4+**。缺文件时 `ensureDeveloperImage` 会自动下载，再依次检查已安装/已挂载、读取设备识别码、请求 Apple 票据、安装并验证。安装后镜像持续到设备重启，并刷新 RSD 服务表。
+
+其他脚本需要镜像时，直接调用自动入口，不要提示用户去页面点按钮：
+
+```ts
+import { ensureLoopbackImageFiles, ensureLoopbackDeveloperImage } from "./kit/loopback";
+
+// 只准备缓存：缺文件时自动下载并轮询到完成。
+const cache = await ensureLoopbackImageFiles();
+
+// 检查并安装：缺文件时也会自动下载；timeout 建议 300000。
+const image = await ensureLoopbackDeveloperImage();
+if (!image.ready) throw new Error(image.message ?? image.status);
+```
+
+`ensureDeveloperImage` 会串行占用 Loopback 的服务，执行期间其他命令排队；安装成功后调用方仍应自己 `tunnel.listServices({ refresh: true })`。需要进度或只想后台预取时，可单独用 `developerImageStatus` / `downloadDeveloperImage`。
+
+文件系统需要在「按脚本授权」开启时允许 `fileSystem`；兼容性自检、下载/删除和安装动作都会请求。
+
+注意：如果 Loopback 是通过 `Script.run({ singleMode: true })` 或其他脚本以“无权限运行”启动的，本次实例可能仍然读不了文件；请从 Scripting 手动打开 Loopback，并在脚本权限里允许 `fileSystem`。授权只需做一次，之后其他脚本调用会自动下载。
+
 ## 所有权与清理
 
 回环拥有它创建或 attach 的句柄。其他脚本拥有自己通过 `attachRSDTunnel()` 获取的句柄。
@@ -143,6 +202,11 @@ shared Storage 可以保存非敏感的连接设置和隧道占用提示，但�
 - `core/pairing.ts`：仅 Keychain 的配对存储及导入导出。
 - `kit/session.ts`：配对、隧道创建和原生 RSD 服务发现。
 - `kit/hub.ts`：回环唯一持有的设备会话。
-- `pages/`：配对、自检、设置和通用 UI。
+- `kit/ddi/cache.ts`：开发者镜像文件清单、缓存检测、下载队列与镜像源。
+- `kit/ddi/install.ts`：检查/下载/票据/安装/验证的编排。
+- `kit/ddi/manifest.ts`、`tss.ts`、`cryptexd.ts`、`mounter.ts`：镜像协议实现。
+- `kit/remoteXpc.ts`、`core/http2frames.ts`：服务端口 RemoteXPC 与流控。
+- `kit/developerImage.ts`：页面和服务共用的镜像缓存/安装状态机。
+- `pages/`：配对、自检、设置、开发者镜像和通用 UI。
 
 英文文档见 [README.md](README.md)。

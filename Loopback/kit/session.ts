@@ -17,6 +17,7 @@ import { withTimeout, type ByteStream } from "../core/stream";
 import { connectTCP, probeTCP } from "../core/tcp";
 import { PlistServiceClient } from "./lockdown";
 // RSD 服务目录由原生 VPNRSDTunnel.listServices 提供。
+import { requireTunnel, requireVpnSupport } from "./apiSupport";
 import type { ConnectionSettings } from "./settings";
 import { prepareVPN } from "./vpn";
 
@@ -30,6 +31,13 @@ const TARGET_CACHE_KEY = "devicekit_pairing_target_v1";
 /** 隧道 4 个连接，RSD 用完即关，再给配对之外的意外留一个余量。 */
 const MAX_SERVICE_CONNECTIONS = 3;
 const TUNNEL_OPEN_TIMEOUT_MS = 15_000;
+
+/** 取消可能还挂在原生侧的"正在打开"；旧版本没有这个方法，缺了就跳过。 */
+async function cancelPendingTunnel(localDev: VPNLocalDevAPI): Promise<void> {
+  const cancel = localDev.cancelRSDTunnelOpening;
+  if (typeof cancel !== "function") return;
+  await cancel.call(localDev).catch(() => undefined);
+}
 
 // 底层 VPN 准备集中在 kit/vpn.ts，必须在查找配对服务之前完成。
 
@@ -190,6 +198,8 @@ export class DeviceSession {
   /** 从已 ready 的原生隧道建立 A 自己的独立会话句柄。 */
   static async attach(tunnel: VPNRSDTunnel, log: StatusReporter = () => {}): Promise<DeviceSession> {
     try {
+      // 句柄级探测：`listServices` 是后加的，旧版本上这里会抛 TypeError。
+      requireTunnel(tunnel);
       log("查询设备服务…");
       const services = new Map<string, number>();
       const advertised = await withTimeout(tunnel.listServices({ refresh: true, timeout: 20_000 }), 20_000, "查询服务列表超时");
@@ -204,10 +214,28 @@ export class DeviceSession {
     }
   }
 
+  /** 重新拉服务表；安装开发者镜像后设备会多出调试服务。 */
+  async refreshServices(): Promise<void> {
+    if (this.closed) throw new Error("会话已结束，请重新连接");
+    const advertised = await withTimeout(
+      this.tunnel.listServices({ refresh: true, timeout: 20_000 }),
+      20_000,
+      "刷新服务列表超时",
+    );
+    this.services.clear();
+    for (const service of advertised) {
+      if (service.name && typeof service.port === "number") this.services.set(service.name, service.port);
+    }
+    debugLog("rsd", `服务表已刷新，共 ${this.services.size} 项`);
+  }
+
   /**
    * 建立会话。任一步失败都会把已经建立的连接收干净再抛错，不留半开的隧道。
    */
   static async open(record: PairingRecord, settings: ConnectionSettings, log: StatusReporter = () => {}): Promise<DeviceSession> {
+    // 没有 VPN / RSD 接口（商店版、旧版）就在这里停：不准备 VPN、不找配对服务、不握手。
+    const support = requireVpnSupport();
+    const localDev = support.api!.localDevVPN;
     await prepareVPN(settings, log);
     const pairing = await openPairing(settings, record, log);
 
@@ -231,7 +259,7 @@ export class DeviceSession {
     log("建立加密隧道…");
     let tunnel: VPNRSDTunnel;
     try {
-      tunnel = await VPN.localDevVPN.openRSDTunnel({
+      tunnel = await localDev.openRSDTunnel({
         host: pairing.host,
         port,
         preSharedKey,
@@ -239,7 +267,7 @@ export class DeviceSession {
       });
     } catch (error) {
       // 那次「正在打开」可能还挂在原生侧，主动收掉，免得下次重试撞上它。
-      await VPN.localDevVPN.cancelRSDTunnelOpening().catch(() => undefined);
+      await cancelPendingTunnel(localDev);
       await pairing.client.close().catch(() => undefined);
       throw new Error(`建立加密隧道失败：${error instanceof Error ? error.message : String(error)}`);
     }

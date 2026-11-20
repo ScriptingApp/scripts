@@ -39,8 +39,30 @@ Loopback registers one serial public service with `ScriptSession.serve`. Command
 | `status` | `paired`, `tunnel_open`, or `not_paired` | Never opens UI |
 | `ensureTunnel` | Ensures Loopback's own tunnel handle is ready; if unpaired, waits up to 120 seconds for a successfully saved pairing record before opening the tunnel; closing the page while unpaired returns `not_paired` | If unpaired, opens or reuses the pairing page; success does not require closing it. If paired, never opens UI |
 | `releaseTunnel` | Releases Loopback's own handle | Never opens UI |
+| `developerImageStatus` | Returns the developer-image cache state; no device connection | Never opens UI |
+| `downloadDeveloperImage` | Starts or reuses a background download and returns immediately; poll `developerImageStatus` for progress | Never opens UI |
+| `ensureDeveloperImage` | Downloads when needed and installs the image; returns `not_paired` when not paired | Never opens UI |
 
 The recommended total client timeout is `180000` ms to allow for pairing and tunnel preparation. The service processes commands serially, so concurrent calls also queue; a client timeout does not cancel work already accepted by Loopback.
+
+### Build compatibility
+
+`VPN`, `VPN.localDevVPN`, and `VPNRSDTunnel` are VPN-family APIs that some builds (App Store, older versions) do not ship. Loopback probes before acting; when they are missing it connects to nothing, never opens the pairing page, and answers the affected commands with "this build is not supported":
+
+```json
+{
+  "status": "unsupported",
+  "supported": false,
+  "ready": false,
+  "missing": ["VPN.localDevVPN.openRSDTunnel"],
+  "message": "This Scripting build does not provide the developer-channel APIs (missing VPN.localDevVPN.openRSDTunnel)..."
+}
+```
+
+- Affected commands: `status`, `ensureTunnel`, `releaseTunnel`, `ensureDeveloperImage` (the last one also carries `stage: "api"` and the current `cache`).
+- `developerImageStatus` / `downloadDeveloperImage` are unaffected: they only use HTTPS and the filesystem, so cache download and deletion still work.
+- A build that only lacks `cancelRSDTunnelOpening` still counts as supported; the connection is opened and only the cancel step is skipped.
+- Clients can ask first with `loopbackSupport()` from `client/loopback.ts`; `attachLoopbackTunnel()` returns `null` on such builds instead of throwing `ReferenceError`.
 
 Example client:
 
@@ -48,14 +70,22 @@ Example client:
 // Script B: no import is needed for ScriptSession, VPN, or DeviceServices.
 async function main() {
   const state = await ScriptSession.call<{
-    status: "paired" | "tunnel_open" | "not_paired" | "error";
+    status: "paired" | "tunnel_open" | "not_paired" | "unsupported" | "error";
     ready?: boolean;
+    supported?: boolean;
+    missing?: string[];
     message?: string;
   }>({
     name: "Loopback",
     message: { command: "ensureTunnel" },
     timeout: 180000,
   });
+
+  // This build has no VPN / RSD APIs: show what Loopback returned and stop.
+  if (state.status === "unsupported") {
+    console.log(state.message, state.missing);
+    return;
+  }
 
   if (state.status !== "tunnel_open" || state.ready !== true) {
     throw new Error(state.message ?? `Loopback is not ready: ${state.status}`);
@@ -115,6 +145,35 @@ const tunnel = await attachLoopbackTunnel();
 if (!tunnel) throw new Error("Loopback tunnel unavailable");
 ```
 
+## Developer image (cache, download and install)
+
+Loopback manages the five developer-image files (BuildManifest, Image.dmg, trustcache, cryptex_info, root_hash) and installs them when needed. The entry is **Developer Image** on the home page:
+
+- Files are cached in `Loopback/DDI` under the app Documents directory, isolated from SideInstaller's `Documents/DDI`; downloads use a DownloadManager background queue.
+- The page shows `n/5`, total size and download progress. Deleting cached files does not unmount an image already installed on the device.
+- The default source matches SideInstaller. The page can override it with any `https://` mirror; changing it clears old download records but keeps downloaded files.
+- Downloads do not use cellular data by default.
+- **Installation requires iOS 26.4+**. If files are missing, `ensureDeveloperImage` downloads them automatically, checks whether an image is already installed/mounted, reads device identifiers, requests the Apple ticket, installs, verifies, and refreshes the RSD service table. The image stays until the device restarts.
+
+When another script needs the image, call the automatic entry instead of asking the user to tap a button:
+
+```ts
+import { ensureLoopbackImageFiles, ensureLoopbackDeveloperImage } from "./kit/loopback";
+
+// Prepare only the cache: missing files are downloaded and polled automatically.
+const cache = await ensureLoopbackImageFiles();
+
+// Check and install: missing files are downloaded automatically too; use timeout 300000.
+const image = await ensureLoopbackDeveloperImage();
+if (!image.ready) throw new Error(image.message ?? image.status);
+```
+
+`ensureDeveloperImage` occupies Loopback's serial service while it runs; other commands queue. After success, callers should still call `tunnel.listServices({ refresh: true })` themselves. Use `developerImageStatus` / `downloadDeveloperImage` separately only for progress or background prefetching.
+
+When per-script permissions are enabled, allow `fileSystem`; the compatibility check, download/delete and install actions request it.
+
+Note: if Loopback was started by `Script.run({ singleMode: true })` or another script under “run without permissions”, that instance may still be unable to access files. Open Loopback manually from Scripting and allow `fileSystem` in the script permissions. This is a one-time grant; later automatic calls download without prompting.
+
 ## Ownership and cleanup
 
 Loopback owns the handle it creates or attaches. A client script owns the handle returned by `attachRSDTunnel()`.
@@ -143,6 +202,11 @@ The shared Storage domain may contain non-secret connection settings and an info
 - `core/pairing.ts`: Keychain-only pairing storage and import/export.
 - `kit/session.ts`: pairing, tunnel creation, and native RSD service discovery.
 - `kit/hub.ts`: the single Loopback-owned session.
-- `pages/`: pairing, compatibility, settings, and shared UI.
+- `kit/ddi/cache.ts`: developer-image file list, cache detection, download queue and source URL.
+- `kit/ddi/install.ts`: check/download/ticket/install/verify orchestration.
+- `kit/ddi/manifest.ts`, `tss.ts`, `cryptexd.ts`, `mounter.ts`: image protocol implementation.
+- `kit/remoteXpc.ts`, `core/http2frames.ts`: service-port RemoteXPC and flow control.
+- `kit/developerImage.ts`: cache/install state machine shared by the page and service commands.
+- `pages/`: pairing, compatibility, settings, developer image, and shared UI.
 
 See [README-zh.md](README-zh.md) for the Chinese version.

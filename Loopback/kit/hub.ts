@@ -9,6 +9,7 @@
 // 各功能页进来都会顺手建会话，首页靠 subscribe 跟着刷新「已连接 / 未连接」，
 // 不然从功能页回来，首页还显示进去之前的状态。
 
+import { VpnUnsupportedError, vpnSupport } from "./apiSupport";
 import { debugLog, describeError } from "../core/debug";
 import { loadPairing, type PairingRecord } from "../core/pairing";
 import { HOLDER_RENEW_MS, claimHolder, holderText, readHolder, releaseHolder, selfName } from "../core/shared";
@@ -82,7 +83,11 @@ class DeviceHub {
 
   private async open(log: StatusReporter): Promise<DeviceSession> {
     try {
-      const existing = await VPN.localDevVPN.attachRSDTunnel();
+      // 先判版本能力：商店版没有 VPN / RSD 接口，别把"没有接口"说成"网络不通"。
+      const support = vpnSupport();
+      if (!support.supported) throw new VpnUnsupportedError(support.missing);
+      const api = support.api!;
+      const existing = await api.localDevVPN.attachRSDTunnel();
       if (existing) {
         const session = await DeviceSession.attach(existing, log);
         this.setSession(session);
@@ -94,8 +99,8 @@ class DeviceHub {
       this.setSession(session);
       return session;
     } catch (error) {
-      // Preparation/permission failures must not be disguised as a stale holder warning.
-      if (error instanceof VPNPreparationError) throw error;
+      // Preparation/permission/version failures must not be disguised as a stale holder warning.
+      if (error instanceof VPNPreparationError || error instanceof VpnUnsupportedError) throw error;
       /*
         失败了先看看是不是被别的脚本占着——同时只能有一条隧道，这是最说得清的那种失败。
         标记只是自愿登记，没有也可能正被占着，所以查不到就按网络那条路继续说。

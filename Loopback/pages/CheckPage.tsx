@@ -33,6 +33,7 @@ import {
   type CheckState,
 } from "../kit/capability";
 import { LINK_LABEL, classifyLink, linkHint, needsAttention, type LinkKind } from "../kit/network";
+import { currentVpnApi, vpnSupportOf } from "../kit/apiSupport";
 import { tx } from "../core/i18n";
 
 const STATE_SYMBOL: Record<CheckState, string> = {
@@ -75,10 +76,12 @@ export function CheckPage() {
       /*
         权限要先问：`requestAccess` 在「按脚本授权」开着时会弹窗，
         而弹窗必须由用户的动作引出来，不能等到后面再补。
+        版本没有 VPN 接口时只请求 fileSystem：不要为一个不存在的权限弹窗。
       */
+      const support = vpnSupportOf(currentVpnApi());
       let granted: string[] = [];
       try {
-        granted = await Script.requestAccess(["localDevVPN", "vpn"]);
+        granted = await Script.requestAccess(support.supported ? ["localDevVPN", "vpn", "fileSystem"] : ["fileSystem"]);
       } catch (error) {
         debugLog("check", "requestAccess 失败", describeError(error));
       }
@@ -92,8 +95,8 @@ export function CheckPage() {
 
       setChecks([
         checkSystem(Device.systemVersion, Device.systemName),
-        checkTunnelApi(typeof VPN === "undefined" ? undefined : VPN, Device.appVersion),
-        checkAccess(granted),
+        checkTunnelApi(currentVpnApi(), Device.appVersion),
+        checkAccess(granted, support.supported),
         checkBonjour(typeof Bonjour !== "undefined"),
         checkSharedDomain(),
         checkLink(link),

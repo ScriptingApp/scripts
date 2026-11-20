@@ -23,6 +23,7 @@ const XpcType = {
   Uuid: 0x0000a000,
   Array: 0x0000e000,
   Dictionary: 0x0000f000,
+  FileTransfer: 0x0001a000,
 } as const;
 
 export const XpcFlag = {
@@ -30,6 +31,8 @@ export const XpcFlag = {
   DataFlag: 0x00000100,
   WantingReply: 0x00010000,
   Reply: 0x00020000,
+  FileTxStreamRequest: 0x00100000,
+  FileTxStreamResponse: 0x00200000,
   InitHandshake: 0x00400000,
 } as const;
 
@@ -39,6 +42,13 @@ export class XpcUInt64 {
 
 export class XpcDouble {
   constructor(readonly value: number) {}
+}
+
+export class XpcFileTransfer {
+  constructor(
+    readonly msgId: bigint,
+    readonly value: XpcValue,
+  ) {}
 }
 
 export class XpcUuid {
@@ -59,6 +69,7 @@ export type XpcValue =
   | XpcUInt64
   | XpcDouble
   | XpcUuid
+  | XpcFileTransfer
   | string
   | Uint8Array
   | XpcValue[]
@@ -95,6 +106,14 @@ function encodeValue(value: XpcValue): Uint8Array {
 
   if (value instanceof XpcUuid) {
     return concat(u32le(XpcType.Uuid), value.bytes);
+  }
+
+  if (value instanceof XpcFileTransfer) {
+    return concat(
+      u32le(XpcType.FileTransfer),
+      u64le(Number(value.msgId)),
+      encodeValue(value.value),
+    );
   }
 
   if (typeof value === "string") {
@@ -190,6 +209,11 @@ function decodeValue(cursor: Cursor): unknown {
       const data = cursor.bytes.slice(cursor.offset, cursor.offset + 16);
       cursor.offset += 16;
       return toHex(data);
+    }
+    case XpcType.FileTransfer: {
+      const msgId = view.getBigUint64(cursor.offset, true);
+      cursor.offset += 8;
+      return new XpcFileTransfer(msgId, decodeValue(cursor) as XpcValue);
     }
     case XpcType.Array: {
       readU32(cursor); // 内容长度，按条目数遍历即可
