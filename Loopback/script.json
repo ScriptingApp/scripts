@@ -9,7 +9,7 @@
     "zh": "配对一次，其他脚本通过 ScriptSession 和原生隧道句柄接入；附带兼容性自检与可选的开发者镜像准备",
     "en": "Pair once, then let other scripts use ScriptSession and native tunnel handles; includes compatibility checks and optional developer image preparation"
   },
-  "version": "1.3.0",
+  "version": "1.3.1",
   "author": {
     "name": "ios151",
     "email": null,

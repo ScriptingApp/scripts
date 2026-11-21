@@ -1,6 +1,6 @@
 // Pairing UI. Credentials are stored only in this script's Keychain.
 
-import { Button, HStack, Image, List, Section, Spacer, Text, VStack, useState } from "scripting";
+import { Button, HStack, Image, List, Script, Section, Spacer, Text, VStack, useState } from "scripting";
 import { utf8 } from "../core/bytes";
 import { describeError } from "../core/debug";
 import { createHostIdentity, createPIN, pairThisDevice } from "../core/pair_setup";
@@ -19,6 +19,8 @@ import {
 import { copyWithFeedback } from "./common";
 import { tx } from "../core/i18n";
 import { deviceHub } from "../kit/hub";
+import { loadConnectionSettings } from "../kit/settings";
+import { prepareVPN } from "../kit/vpn";
 import { releaseKeepAlive, retainKeepAlive } from "../utils/keepalive";
 import { PIN_ORDER_HINT, clearPinNotice, showPinNotice } from "../kit/pinNotice";
 
@@ -37,9 +39,22 @@ export function PairingPage({ onChanged, onPaired, onClose }: { onChanged: () =>
 
   async function runPairing() {
     setBusy(true);
-    report("");
+    report(tx("正在检查配对权限…", "Checking pairing permissions…"));
     let lease = false;
+    let pinNoticeStarted = false;
     try {
+      const permissions = ["localDevVPN", "vpn", "fileSystem"] as const;
+      const granted = await Script.requestAccess([...permissions]);
+      const missing = permissions.filter(permission => !granted.includes(permission));
+      if (missing.length > 0) {
+        report(tx(
+          `未获得 ${missing.join("、")} 权限。请在 Scripting 的脚本权限中允许 Loopback 后重试。`,
+          `Missing permissions: ${missing.join(", ")}. Allow them for Loopback in Scripting’s script permissions and retry.`,
+        ), true);
+        return;
+      }
+      await prepareVPN(loadConnectionSettings(), report);
+
       /*
         保活照 utils/keepalive.ts 那三条规矩：在前台就申请、看返回值、只走 retain/release。
         输 PIN 要切到「设置」，本页在后台等，保活没起来就可能被回收。
@@ -56,6 +71,7 @@ export function PairingPage({ onChanged, onPaired, onClose }: { onChanged: () =>
       const code = createPIN();
       setPin(code);
       // 配对要切去「设置」，界面上的 PIN 就看不见了——推一条通知带着走
+      pinNoticeStarted = true;
       await showPinNotice(code);
       const paired = await pairThisDevice(host, code, (message) => report(message));
 
@@ -72,7 +88,7 @@ export function PairingPage({ onChanged, onPaired, onClose }: { onChanged: () =>
     } finally {
       if (lease) await releaseKeepAlive("pairing").catch(() => undefined);
       // PIN 是一次性的：不管成没成，都别把它留在通知中心里
-      await clearPinNotice();
+      if (pinNoticeStarted) await clearPinNotice();
       setPin("");
       setBusy(false);
     }
